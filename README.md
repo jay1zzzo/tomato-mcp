@@ -1,9 +1,13 @@
 # Tomato Timer MCP
 
 A small MCP server that lets Claude, Claude Code or ChatGPT read and change the task list in
-[Tomato Timer](https://github.com/jay1zzzo/tomato-timer). Tomato Timer already syncs its tasks to a
-private GitHub repo; this server reads and writes that same file, so changes made through an AI
-show up in the app on the next sync (and the other way round).
+Tomato Timer, a personal productivity app I built for my own use. **Tomato Timer is not a public
+product and isn't available to install**; this repo is published to show how the connection works.
+The app syncs its tasks to a private GitHub repo, and this server reads and writes that same file, so
+changes made through an AI show up in the app on the next sync (and the other way round).
+
+Want to reuse the idea? The server works with any private GitHub repo that holds a `tasks.json` in the
+same shape as the one the app writes (see `test_server.py` for sample data).
 
 ## Tools (kept to four on purpose, so it costs very little to leave connected)
 
@@ -16,7 +20,7 @@ show up in the app on the next sync (and the other way round).
 
 Replies are short lists, not whole files, so an AI can stay up to date without using many tokens.
 
-## How it keeps your data safe
+## How it keeps the data safe
 
 * It follows the same ordering rules as the app (starred tasks first, then position).
 * It only touches the rows it changes, and keeps everything else in the file as it was.
@@ -32,8 +36,7 @@ Replies are short lists, not whole files, so an AI can stay up to date without u
    .venv/bin/pip install -r requirements.txt        # Windows: .venv\Scripts\pip install -r requirements.txt
    ```
 2. **Make a token.** GitHub > Settings > Developer settings > Fine-grained tokens. Give it access to
-   the `tomato-data` repo only, with Contents set to Read and write. (The token you already use for
-   syncing in the app works too.)
+   the `tomato-data` repo only, with Contents set to Read and write.
 3. **Connect it.**
 
    Claude Code:
