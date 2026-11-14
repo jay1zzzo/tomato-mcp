@@ -64,5 +64,6 @@ against a fake GitHub API.
 
 ## Limits
 
-This version runs on your own computer, so it works in Claude Code and Claude Desktop. ChatGPT and
-claude.ai on the web need a hosted version (a small web server with a password) which is the next step.
+This version runs on the computer it is installed on, so it works with Claude Code and Claude Desktop.
+ChatGPT and claude.ai on the web would need a hosted version (a small web server with a login). That
+is a possible next step for my own use, not something that exists yet.
