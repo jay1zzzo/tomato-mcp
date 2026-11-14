@@ -1,7 +1,7 @@
 """Tomato Timer MCP server.
 
-Lets an AI app (Claude, Claude Code, ChatGPT...) read and change the task list that
-Tomato Timer syncs to a private GitHub repo. It is deliberately small: four tools with
+Lets an AI app that supports MCP (tested with Claude Desktop and Claude Code) read and change the
+task list that Tomato Timer, a personal app, syncs to a private GitHub repo. It is deliberately small: four tools with
 short replies, so it costs very little to keep connected.
 
 Settings come from environment variables:
@@ -34,6 +34,10 @@ class Conflict(Exception):
     """The app synced while we were editing; reload and try again."""
 
 
+class TaskError(Exception):
+    """Something the AI can fix and retry (no match, several matches, unknown action). The text is shown to it."""
+
+
 class Store:
     def load(self, name):
         """Return (data, version) for tasks.json / calendar.json."""
@@ -57,7 +61,7 @@ class Store:
                 "content": base64.b64encode(text.encode("utf-8")).decode("ascii")}
         r = httpx.put(f"https://api.github.com/repos/{REPO}/contents/{name}",
                       headers=self._headers(), json=body, timeout=20)
-        if r.status_code in (409, 422):
+        if r.status_code == 409:
             raise Conflict()
         r.raise_for_status()
 
@@ -113,28 +117,29 @@ def line(t):
 
 
 def find(tasks, ref):
-    """Match a task by id, or by part of its title. Returns (task, error_message)."""
+    """Match a task by id, or by part of its title. Raises TaskError if there is not exactly one match."""
     ref = ref.strip()
     for t in tasks:
         if t["id"] == ref:
-            return t, None
+            return t
     hits = [t for t in tasks if ref.lower() in t["title"].lower() and not is_past(t)]
     exact = [t for t in hits if t["title"].lower() == ref.lower()]
     hits = exact or hits
     if len(hits) == 1:
-        return hits[0], None
+        return hits[0]
     if not hits:
-        return None, f"No task matches '{ref}'."
-    return None, "More than one match, use an id:\n" + "\n".join(line(t) for t in hits[:6])
+        raise TaskError(f"No task matches '{ref}'.")
+    raise TaskError("More than one match, use an id:\n" + "\n".join(line(t) for t in hits[:6]))
 
 
 def edit_tasks(change, message):
     """Load tasks.json, apply change(data) -> reply, save. Retries if the app synced meanwhile."""
     for _ in range(3):
         data, version = store.load("tasks.json")
-        reply = change(data)
-        if reply is None or reply.startswith(("No task", "More than", "Nothing")):
-            return reply or "Nothing changed."
+        try:
+            reply = change(data)
+        except TaskError as e:
+            return str(e)
         try:
             store.save("tasks.json", data, version, message)
             return reply
@@ -178,8 +183,8 @@ def get_context() -> str:
         if nxt:
             out.append("Next posts: " + "; ".join(
                 f"{p['date']} {p.get('title', '')}" + (" (ready)" if p.get("ready") else "") for p in nxt))
-    except Exception:
-        pass
+    except (httpx.HTTPError, OSError, ValueError, KeyError):
+        pass  # the calendar is optional; the task snapshot is still useful without it
     return "\n".join(out)
 
 
@@ -223,9 +228,7 @@ def update_task(task: str, action: str, new_title: str = "") -> str:
     """Change one task. task = its id or part of its title.
     action: done, undone, top, bottom, later, today, star, unstar, rename (with new_title)."""
     def change(data):
-        t, err = find(data["tasks"], task)
-        if err:
-            return err
+        t = find(data["tasks"], task)
         stamp = now_ms()
         if action == "done":
             t.update(done=True, doneDay=today(), completedAt=stamp)
@@ -233,7 +236,7 @@ def update_task(task: str, action: str, new_title: str = "") -> str:
             t.update(done=False, doneDay=None, completedAt=None)
         elif action in ("top", "bottom"):
             if t.get("done"):
-                return "Nothing changed: that task is already done."
+                raise TaskError("Nothing changed: that task is already done.")
             group = [x for x in ordered_open(data["tasks"], is_later(t))
                      if bool(x.get("starred")) == bool(t.get("starred"))]
             renumber(group, t, action)
@@ -244,7 +247,7 @@ def update_task(task: str, action: str, new_title: str = "") -> str:
         elif action == "rename" and new_title.strip():
             t["title"] = " ".join(new_title.split())[:600]
         else:
-            return "Nothing changed: unknown action. Use done, undone, top, bottom, later, today, star, unstar or rename."
+            raise TaskError("Nothing changed: unknown action. Use done, undone, top, bottom, later, today, star, unstar or rename.")
         t["updated"] = stamp
         return f"{action}: {line(t)}"
     return edit_tasks(change, f"{action} task via MCP")

@@ -1,13 +1,24 @@
 # Tomato Timer MCP
 
-A small MCP server that lets Claude, Claude Code or ChatGPT read and change the task list in
-Tomato Timer, a personal productivity app I built for my own use. **Tomato Timer is not a public
-product and isn't available to install**; this repo is published to show how the connection works.
-The app syncs its tasks to a private GitHub repo, and this server reads and writes that same file, so
-changes made through an AI show up in the app on the next sync (and the other way round).
+A small MCP server that lets an AI app (tested with Claude Desktop and Claude Code) read and change my
+task list in Tomato Timer, a personal productivity app I built for my own use. **Tomato Timer is not a
+public product and isn't available to install**; this repo is published to show how the connection works.
 
-Want to reuse the idea? The server works with any private GitHub repo that holds a `tasks.json` in the
-same shape as the one the app writes (see `test_server.py` for sample data).
+The app syncs its tasks to a private GitHub repo. This server reads and writes that same file, so changes
+made through an AI show up in the app on the next sync, and the other way round.
+
+## The data it works with
+
+A `tasks.json` file in a private GitHub repo, shaped like this (the app writes it; the tests use made-up data):
+
+```json
+{"v": 1, "deleted": [],
+ "tasks": [{"id": "abc123", "title": "Email the plumber", "done": false, "day": "2026-11-14",
+            "sessions": 0, "updated": 1731600000000, "ord": 10, "starred": false, "later": false}]}
+```
+
+`ord` is the position in a list, `later` parks a task, and finished tasks carry a `doneDay`. An optional
+`calendar.json` holds content-calendar posts. Anyone could point the server at a repo with a file in this shape.
 
 ## Tools (kept to four on purpose, so it costs very little to leave connected)
 
@@ -58,9 +69,12 @@ Never commit your token. Settings: `TOMATO_REPO` (required, e.g. `your-username/
 
 ## Tests
 
-`python test_server.py` runs the server over the real MCP protocol on made-up tasks, and
-`python test_github_mock.py` checks the GitHub path, including the "app synced at the same time" retry,
-against a fake GitHub API.
+```
+python test_server.py          # the real MCP protocol, on made-up tasks in a temp folder
+python test_github_mock.py     # the GitHub path against a fake GitHub API, including the "app synced at the same time" retry
+```
+
+Both use plain `assert`s, so `pytest` runs them too. They never touch the network or a real token.
 
 ## Limits
 
