@@ -41,6 +41,8 @@ def make_data(folder):
         task(9, "Send invoice", later=True, due=day(0), dueTime="17:00"),
         task(10, "Interview", later=True, due=day(6), dueTime="10:30"),
         task(11, "Dated but done", done=True, doneDay=day(-3), due=day(-3)),
+        task(12, "Future, made in Today", ord=60, due=day(4)),
+        task(13, "Future but starred", ord=70, starred=True, due=day(4)),
     ]
     posts = [{"id": "p1", "title": "Coffee morning recap", "date": "2099-01-01", "ready": True}]
     with open(os.path.join(folder, "tasks.json"), "w") as f:
@@ -68,19 +70,20 @@ async def run(folder):
             assert tools == {"get_context", "list_tasks", "add_task", "update_task"}
 
             # starred tasks sort first, then by position; dated Later tasks join Today on (or after) their day
-            assert ids(await call("list_tasks")) == ["t5", "t1", "t2", "t3", "t4", "t8", "t9"]
-            assert ids(await call("list_tasks", scope="later")) == ["t6", "t10"]
+            # a task dated in the future waits in Later until its day, unless it is starred (then it stays in Today)
+            assert ids(await call("list_tasks")) == ["t5", "t13", "t1", "t2", "t3", "t4", "t8", "t9"]
+            assert ids(await call("list_tasks", scope="later")) == ["t12", "t6", "t10"]
 
             ctx = await call("get_context")
-            assert "7 open, 2 later, 0 done" in ctx and "Coffee morning recap" in ctx
-            assert "Upcoming (1 dated)" in ctx and "Interview" in ctx
+            assert "8 open, 3 later, 0 done" in ctx and "Coffee morning recap" in ctx
+            assert "Upcoming (2 dated)" in ctx and "Future, made in Today" in ctx
 
             # upcoming: dated and not done, soonest first, with the urgency marked
             up = await call("list_tasks", scope="upcoming")
-            assert ids(up) == ["t8", "t9", "t10"]
+            assert ids(up) == ["t8", "t9", "t12", "t13", "t10"]
             rows = up.splitlines()
             assert rows[0].endswith("OVERDUE") and rows[1].endswith("TODAY") and "17:00" in rows[1]
-            assert "10:30]" in rows[2] and not rows[2].endswith(("OVERDUE", "TODAY", "TOMORROW"))
+            assert "10:30]" in rows[4] and not rows[4].endswith(("OVERDUE", "TODAY", "TOMORROW"))
 
             # adding with a date and time; bad dates change nothing
             reply = await call("add_task", title="Dentist", later=True, due=day(1), due_time="9:05")
@@ -93,6 +96,12 @@ async def run(folder):
 
             # a task dated today or earlier stays in Today
             assert "stays in Today" in await call("update_task", task="t8", action="later")
+            # a future-dated task can't be moved by hand; starring it is what brings it into Today
+            assert "waits in Later" in await call("update_task", task="t12", action="today")
+            await call("update_task", task="t12", action="star")
+            assert "t12" in ids(await call("list_tasks")) and "t12" not in ids(await call("list_tasks", scope="later"))
+            await call("update_task", task="t12", action="unstar")
+            assert "t12" in ids(await call("list_tasks", scope="later"))
 
             # changing and removing a date
             await call("update_task", task="Foxtrot", action="date", due=day(3))
@@ -104,11 +113,11 @@ async def run(folder):
             reply = await call("add_task", title="  Email   the plumber back ", position="top")
             assert reply.startswith("Added:") and "Email the plumber back" in reply
             new_id = reply.removeprefix("Added: ").split(" | ")[0]
-            assert ids(await call("list_tasks"))[1:3] == [new_id, "t1"]
+            assert ids(await call("list_tasks"))[2:4] == [new_id, "t1"]  # after the two starred ones
 
             # moving, parking, finishing
             await call("update_task", task="delta", action="top")
-            assert ids(await call("list_tasks"))[1] == "t4"
+            assert ids(await call("list_tasks"))[2] == "t4"
             await call("update_task", task="Charlie", action="later")
             assert "t3" in ids(await call("list_tasks", scope="later"))
             await call("update_task", task="bravo", action="done")
@@ -123,7 +132,7 @@ async def run(folder):
     # it never deletes: all eleven original tasks plus the two new ones are still in the file
     with open(os.path.join(folder, "tasks.json")) as f:
         saved = {t["id"]: t for t in json.load(f)["tasks"]}
-    assert len(saved) == 13 and {f"t{i}" for i in range(1, 12)} <= set(saved)
+    assert len(saved) == 15 and {f"t{i}" for i in range(1, 14)} <= set(saved)
     # undated tasks never gain date fields; a removed date leaves no empty field behind
     assert all("due" not in saved[f"t{i}"] and "dueTime" not in saved[f"t{i}"] for i in range(1, 8))
     assert saved["t8"]["later"] is True  # shown in Today by date, but the file was not rewritten

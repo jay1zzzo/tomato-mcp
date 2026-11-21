@@ -102,12 +102,13 @@ def due_of(t):
 
 
 def is_later(t):
-    """Parked in Later. A dated Later task comes back to Today on its day (and stays there if overdue),
-    decided when reading, so nothing in the file is rewritten."""
-    if t.get("later") is not True:
-        return False
+    """Where a task shows. A dated task follows its date: today or earlier it is in Today; in the future it waits
+    in Later (and Upcoming) until its day, unless it is starred, which keeps it in Today. Undated tasks use their
+    list. Decided when reading, so nothing in the file is rewritten."""
     d = due_of(t)
-    return not (d and d <= today())
+    if d:
+        return d > today() and not t.get("starred")
+    return t.get("later") is True
 
 
 def is_past(t):
@@ -293,7 +294,7 @@ def add_task(title: str, later: bool = False, starred: bool = False, position: s
     """Add a task. later=True parks it in Later instead of Today. starred pins it to the top.
     position: bottom (default) or top of its list.
     due: optional date YYYY-MM-DD (for calls, deadlines); due_time: optional HH:MM, needs due.
-    A dated task in Later shows in Today automatically on its day."""
+    A task dated in the future waits in Later and Upcoming and shows in Today on its day; starred=True keeps it in Today now."""
     title = " ".join(title.split())[:600]
     if not title:
         return "Nothing to add."
@@ -333,8 +334,11 @@ def update_task(task: str, action: str, new_title: str = "", due: str = "", due_
             renumber(group, t, action)
         elif action in ("later", "today"):
             d = due_of(t)
-            if action == "later" and d and d <= today():
+            if d and d <= today():
                 raise TaskError(f"Nothing changed: it is dated {when(t)}, so it stays in Today. Change the date (action date) to move it.")
+            if d:
+                raise TaskError(f"Nothing changed: it is dated {when(t)}, so it waits in Later and Upcoming until its day. "
+                                "Star it (action star) to keep it in Today now, or change the date.")
             t["later"] = action == "later"
         elif action in ("star", "unstar"):
             t["starred"] = action == "star"
