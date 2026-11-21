@@ -16,7 +16,7 @@ import os
 import random
 import string
 import time
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -91,8 +91,23 @@ def new_id():
 
 
 # ---------- the same rules the app uses ----------
+def due_of(t):
+    """The task's optional date (YYYY-MM-DD) or '' when it has none or it is not a valid date."""
+    d = t.get("due") or ""
+    try:
+        date.fromisoformat(d)
+        return d
+    except (TypeError, ValueError):
+        return ""
+
+
 def is_later(t):
-    return t.get("later") is True
+    """Parked in Later. A dated Later task comes back to Today on its day (and stays there if overdue),
+    decided when reading, so nothing in the file is rewritten."""
+    if t.get("later") is not True:
+        return False
+    d = due_of(t)
+    return not (d and d <= today())
 
 
 def is_past(t):
@@ -112,8 +127,62 @@ def ordered_open(tasks, later):
     return by_ord([t for t in pool if t.get("starred")]) + by_ord([t for t in pool if not t.get("starred")])
 
 
+def when(t):
+    """A dated task's date as the app shows it, e.g. 'Mon 23 Nov 14:30', or '' for an undated task."""
+    d = due_of(t)
+    if not d:
+        return ""
+    day = date.fromisoformat(d)
+    out = f"{day:%a} {day.day} {day:%b}"  # not %-d, which Windows does not support
+    if t.get("dueTime"):
+        out += " " + t["dueTime"]
+    return out
+
+
+def urgency(t):
+    """overdue, today, tomorrow, this week or later, the same cue the app colours."""
+    days = (date.fromisoformat(due_of(t)) - date.fromisoformat(today())).days
+    if days < 0:
+        return "overdue"
+    return {0: "today", 1: "tomorrow"}.get(days, "this week" if days <= 7 else "later")
+
+
 def line(t):
-    return f"{t['id']} | {'*' if t.get('starred') else ' '} {t['title']}"
+    w = when(t)
+    return f"{t['id']} | {'*' if t.get('starred') else ' '} {t['title']}" + (f" [{w}]" if w else "")
+
+
+def upcoming(tasks):
+    """Dated tasks that are not done, soonest first (a task with a time comes after the all-day ones that day)."""
+    rows = [t for t in tasks if due_of(t) and not t.get("done")]
+    return sorted(rows, key=lambda t: (due_of(t), t.get("dueTime") or ""))
+
+
+def check_date(due, due_time):
+    """Tidy and check an optional date and time. Returns (due, due_time) or raises TaskError."""
+    due, due_time = (due or "").strip(), (due_time or "").strip()
+    if due:
+        try:
+            due = date.fromisoformat(due).isoformat()
+        except ValueError:
+            raise TaskError(f"Nothing changed: '{due}' is not a date. Use YYYY-MM-DD, e.g. {today()}.")
+    if due_time:
+        if not due:
+            raise TaskError("Nothing changed: a time needs a date too (due=YYYY-MM-DD).")
+        try:
+            due_time = datetime.strptime(due_time, "%H:%M").strftime("%H:%M")
+        except ValueError:
+            raise TaskError(f"Nothing changed: '{due_time}' is not a time. Use HH:MM (24-hour), e.g. 14:30.")
+    return due, due_time
+
+
+def set_date(t, due, due_time):
+    """Write the date fields; leaving them off when empty so undated tasks look exactly as before."""
+    for key, value in (("due", due), ("dueTime", due_time)):
+        if value:
+            t[key] = value
+        else:
+            t.pop(key, None)
 
 
 def find(tasks, ref):
@@ -176,6 +245,10 @@ def get_context() -> str:
     out += [line(t) for t in open_today[:10]]
     if len(open_today) > 10:
         out.append(f"...and {len(open_today) - 10} more")
+    soon = [t for t in upcoming(tasks) if t not in open_today]
+    if soon:
+        out.append(f"Upcoming ({len(soon)} dated): " + "; ".join(
+            f"{when(t)} {t['title']}" for t in soon[:3]))
     try:
         cal, _ = store.load("calendar.json")
         nxt = sorted((p for p in cal.get("posts", []) if p.get("date", "") >= today() and not p.get("doneDay")),
@@ -190,13 +263,22 @@ def get_context() -> str:
 
 @mcp.tool()
 def list_tasks(scope: str = "today", limit: int = 15) -> str:
-    """List tasks as 'id | * title' (* = starred). scope: today (default), later, or done (finished today)."""
+    """List tasks as 'id | * title [date]' (* = starred; the date only on dated tasks).
+    scope: today (default), later, done (finished today) or upcoming (dated, not done, soonest first,
+    with overdue/today/tomorrow marked)."""
     data, _ = store.load("tasks.json")
     tasks = data["tasks"]
     if scope == "later":
         rows = ordered_open(tasks, True)
     elif scope == "done":
         rows = [t for t in tasks if t.get("done") and t.get("doneDay") == today()]
+    elif scope == "upcoming":
+        rows = upcoming(tasks)
+        if not rows:
+            return "No upcoming dated tasks."
+        cue = {"overdue": " OVERDUE", "today": " TODAY", "tomorrow": " TOMORROW"}
+        more = f"\n...and {len(rows) - limit} more" if len(rows) > limit else ""
+        return "\n".join(line(t) + cue.get(urgency(t), "") for t in rows[:limit]) + more
     else:
         rows = ordered_open(tasks, False)
     if not rows:
@@ -206,27 +288,36 @@ def list_tasks(scope: str = "today", limit: int = 15) -> str:
 
 
 @mcp.tool()
-def add_task(title: str, later: bool = False, starred: bool = False, position: str = "bottom") -> str:
+def add_task(title: str, later: bool = False, starred: bool = False, position: str = "bottom",
+             due: str = "", due_time: str = "") -> str:
     """Add a task. later=True parks it in Later instead of Today. starred pins it to the top.
-    position: bottom (default) or top of its list."""
+    position: bottom (default) or top of its list.
+    due: optional date YYYY-MM-DD (for calls, deadlines); due_time: optional HH:MM, needs due.
+    A dated task in Later shows in Today automatically on its day."""
     title = " ".join(title.split())[:600]
     if not title:
         return "Nothing to add."
+    try:
+        due, due_time = check_date(due, due_time)
+    except TaskError as e:
+        return str(e)
 
     def change(data):
         t = {"id": new_id(), "title": title, "done": False, "day": today(), "sessions": 0,
              "updated": now_ms(), "later": later, "starred": starred}
+        set_date(t, due, due_time)
         data["tasks"].append(t)
-        group = [x for x in ordered_open(data["tasks"], later) if bool(x.get("starred")) == starred]
+        group = [x for x in ordered_open(data["tasks"], is_later(t)) if bool(x.get("starred")) == starred]
         renumber(group, t, position if position in ("top", "bottom") else "bottom")
-        return f"Added: {line(t)}" + (" (Later)" if later else "")
+        return f"Added: {line(t)}" + (" (Later)" if is_later(t) else "")
     return edit_tasks(change, "Add task via MCP")
 
 
 @mcp.tool()
-def update_task(task: str, action: str, new_title: str = "") -> str:
+def update_task(task: str, action: str, new_title: str = "", due: str = "", due_time: str = "") -> str:
     """Change one task. task = its id or part of its title.
-    action: done, undone, top, bottom, later, today, star, unstar, rename (with new_title)."""
+    action: done, undone, top, bottom, later, today, star, unstar, rename (with new_title),
+    date (with due YYYY-MM-DD and optional due_time HH:MM; an empty due removes the date)."""
     def change(data):
         t = find(data["tasks"], task)
         stamp = now_ms()
@@ -246,8 +337,10 @@ def update_task(task: str, action: str, new_title: str = "") -> str:
             t["starred"] = action == "star"
         elif action == "rename" and new_title.strip():
             t["title"] = " ".join(new_title.split())[:600]
+        elif action == "date":
+            set_date(t, *check_date(due, due_time))
         else:
-            raise TaskError("Nothing changed: unknown action. Use done, undone, top, bottom, later, today, star, unstar or rename.")
+            raise TaskError("Nothing changed: unknown action. Use done, undone, top, bottom, later, today, star, unstar, rename or date.")
         t["updated"] = stamp
         return f"{action}: {line(t)}"
     return edit_tasks(change, f"{action} task via MCP")

@@ -17,7 +17,9 @@ A `tasks.json` file in a private GitHub repo, shaped like this (the app writes i
             "sessions": 0, "updated": 1731600000000, "ord": 10, "starred": false, "later": false}]}
 ```
 
-`ord` is the position in a list, `later` parks a task, and finished tasks carry a `doneDay`. An optional
+`ord` is the position in a list, `later` parks a task, and finished tasks carry a `doneDay`. A task can
+have an optional date, `"due": "2026-11-23"`, and time, `"dueTime": "14:30"`; tasks without them work as
+before. A dated task in Later shows in Today on its day (worked out when reading, so the file isn't rewritten). An optional
 `calendar.json` holds content-calendar posts. Anyone could point the server at a repo with a file in this shape.
 
 ## Tools (kept to four on purpose, so it costs very little to leave connected)
@@ -25,9 +27,9 @@ A `tasks.json` file in a private GitHub repo, shaped like this (the app writes i
 | Tool | What it does |
 | --- | --- |
 | `get_context` | Short snapshot: today's open tasks in order, how many are in Later, what was done today, the next content-calendar posts |
-| `list_tasks` | List `today`, `later` or `done` tasks as `id \| * title` |
-| `add_task` | Add a task (to Today or Later, starred or not, top or bottom) |
-| `update_task` | Mark done or undone, send to top or bottom, move between Today and Later, star or unstar, rename |
+| `list_tasks` | List `today`, `later`, `done` or `upcoming` (dated, not done, soonest first, overdue/today/tomorrow marked) tasks as `id \| * title [date]` |
+| `add_task` | Add a task (to Today or Later, starred or not, top or bottom, with an optional date and time) |
+| `update_task` | Mark done or undone, send to top or bottom, move between Today and Later, star or unstar, rename, set or clear the date |
 
 Replies are short lists, not whole files, so an AI can stay up to date without using many tokens.
 
