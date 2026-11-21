@@ -332,6 +332,9 @@ def update_task(task: str, action: str, new_title: str = "", due: str = "", due_
                      if bool(x.get("starred")) == bool(t.get("starred"))]
             renumber(group, t, action)
         elif action in ("later", "today"):
+            d = due_of(t)
+            if action == "later" and d and d <= today():
+                raise TaskError(f"Nothing changed: it is dated {when(t)}, so it stays in Today. Change the date (action date) to move it.")
             t["later"] = action == "later"
         elif action in ("star", "unstar"):
             t["starred"] = action == "star"

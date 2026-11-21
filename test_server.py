@@ -91,6 +91,9 @@ async def run(folder):
             assert "needs a date" in await call("add_task", title="Bad", due_time="10:00")
             assert "not a time" in await call("add_task", title="Bad", due=day(2), due_time="25:99")
 
+            # a task dated today or earlier stays in Today
+            assert "stays in Today" in await call("update_task", task="t8", action="later")
+
             # changing and removing a date
             await call("update_task", task="Foxtrot", action="date", due=day(3))
             assert "t6" in ids(await call("list_tasks", scope="upcoming"))
